@@ -24,6 +24,7 @@ from lib.options import BaseOptions
 from lib.mesh_util import save_obj_mesh_with_color, reconstruction
 from lib.data import EvalWPoseDataset, EvalDataset
 from lib.model import HGPIFuNetwNML, HGPIFuMRNet
+from lib.model_pifu import ResBlkPIFuNet
 from lib.geometry import index
 
 from PIL import Image
@@ -81,19 +82,21 @@ def gen_mesh(res, net, cuda, data, save_path, thresh=0.5, use_octree=True, compo
         print(e)
 
 
-def gen_mesh_imgColor(res, net, cuda, data, save_path, thresh=0.5, use_octree=True, components=False):
+def gen_mesh_imgColor(res, netMR, netC, cuda, data, save_path, thresh=0.5, use_octree=True, components=False):
     image_tensor_global = data['img_512'].to(device=cuda)
     image_tensor = data['img'].to(device=cuda)
     calib_tensor = data['calib'].to(device=cuda)
 
-    net.filter_global(image_tensor_global)
-    net.filter_local(image_tensor[:,None])
+    netMR.filter_global(image_tensor_global)
+    netMR.filter_local(image_tensor[:,None])
+    netC.filter(image_tensor_global)
+    netC.attach(netMR.netG.get_im_feat())
 
     try:
-        if net.netG.netF is not None:
-            image_tensor_global = torch.cat([image_tensor_global, net.netG.nmlF], 0)
-        if net.netG.netB is not None:
-            image_tensor_global = torch.cat([image_tensor_global, net.netG.nmlB], 0)
+        if netMR.netG.netF is not None:
+            image_tensor_global = torch.cat([image_tensor_global, netMR.netG.nmlF], 0)
+        if netMR.netG.netB is not None:
+            image_tensor_global = torch.cat([image_tensor_global, netMR.netG.nmlB], 0)
     except:
         pass
 
@@ -109,18 +112,19 @@ def gen_mesh_imgColor(res, net, cuda, data, save_path, thresh=0.5, use_octree=Tr
         cv2.imwrite(save_img_path, save_img)
 
         verts, faces, _, _ = reconstruction(
-            net, cuda, calib_tensor, res, b_min, b_max, thresh, use_octree=use_octree, num_samples=100000)
+            netMR, cuda, calib_tensor, res, b_min, b_max, thresh, use_octree=use_octree, num_samples=100000)
         verts_tensor = torch.from_numpy(verts.T).unsqueeze(0).to(device=cuda).float()
 
-        # if this returns error, projection must be defined somewhere else
-        xyz_tensor = net.projection(verts_tensor, calib_tensor[:1])
-        uv = xyz_tensor[:, :2, :]
-        color = index(image_tensor[:1], uv).detach().cpu().numpy()[0].T
-        color = color * 0.5 + 0.5
-
-        if 'calib_world' in data:
-            calib_world = data['calib_world'].numpy()[0]
-            verts = np.matmul(np.concatenate([verts, np.ones_like(verts[:,:1])],1), inv(calib_world).T)[:,:3]
+        color = np.zeros(verts.shape)
+        interval = 10000
+        for i in range(len(color) // interval):
+            left = i * interval
+            right = i * interval + interval
+            if i == len(color) // interval - 1:
+                right = -1
+            netC.query(verts_tensor[:, :, left:right], calib_tensor)
+            rgb = netC.get_preds()[0].detach().cpu().numpy() * 0.5 + 0.5
+            color[left:right] = rgb.T
 
         save_obj_mesh_with_color(save_path, verts, faces, color)
 
@@ -151,12 +155,14 @@ def recon(opt, use_rect=False):
         resolution = opt.resolution
         results_path = opt.results_path
         loadSize = opt.loadSize
+        load_netC_checkpoint_path = opt.load_netC_checkpoint_path
         
         opt = state_dict['opt']
         opt.dataroot = dataroot
         opt.resolution = resolution
         opt.results_path = results_path
         opt.loadSize = loadSize
+        opt.load_netC_checkpoint_path = load_netC_checkpoint_path
     else:
         raise Exception('failed loading state dict!', state_dict_path)
     
@@ -175,12 +181,14 @@ def recon(opt, use_rect=False):
     opt_netG = state_dict['opt_netG']
     netG = HGPIFuNetwNML(opt_netG, projection_mode).to(device=cuda)
     netMR = HGPIFuMRNet(opt, netG, projection_mode).to(device=cuda)
+    netC = ResBlkPIFuNet(opt).to(device=cuda)
 
     def set_eval():
         netG.eval()
 
     # load checkpoints
     netMR.load_state_dict(state_dict['model_state_dict'])
+    netC.load_state_dict(torch.load(opt.load_netC_checkpoint_path, map_location=cuda))
 
     os.makedirs(opt.checkpoints_path, exist_ok=True)
     os.makedirs(opt.results_path, exist_ok=True)
@@ -203,11 +211,13 @@ def recon(opt, use_rect=False):
             # for multi-person processing, set it to False
             if True:
                 test_data = test_dataset[i]
+                if test_data is None:
+                    continue
 
                 save_path = '%s/%s/recon/result_%s_%d.obj' % (opt.results_path, opt.name, test_data['name'], opt.resolution)
 
                 print(save_path)
-                gen_mesh(opt.resolution, netMR, cuda, test_data, save_path, components=opt.use_compose)
+                gen_mesh_imgColor(opt.resolution, netMR, netC, cuda, test_data, save_path, components=opt.use_compose)
             else:
                 for j in range(test_dataset.get_n_person(i)):
                     test_dataset.person_id = j

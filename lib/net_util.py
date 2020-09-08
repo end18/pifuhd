@@ -83,6 +83,25 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
     init_weights(net, init_type, init_gain=init_gain)
     return net
 
+def get_norm_layer(norm_type='instance'):
+    """Return a normalization layer
+    Parameters:
+        norm_type (str) -- the name of the normalization layer: batch | instance | none
+    For BatchNorm, we use learnable affine parameters and track running statistics (mean/stddev).
+    For InstanceNorm, we do not use learnable affine parameters. We do not track running statistics.
+    """
+    if norm_type == 'batch':
+        norm_layer = functools.partial(nn.BatchNorm2d, affine=True, track_running_stats=True)
+    elif norm_type == 'instance':
+        norm_layer = functools.partial(nn.InstanceNorm2d, affine=False, track_running_stats=False)
+    elif norm_type == 'group':
+        norm_layer = functools.partial(nn.GroupNorm, 32)
+    elif norm_type == 'none':
+        norm_layer = None
+    else:
+        raise NotImplementedError('normalization layer [%s] is not found' % norm_type)
+    return norm_layer
+
 class CustomBCELoss(nn.Module):
     def __init__(self, brock=False, gamma=None):
         super(CustomBCELoss, self).__init__()
