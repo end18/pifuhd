@@ -90,7 +90,10 @@ class EvalDataset(Dataset):
         pid = min(rects.shape[0]-1, self.person_id)
 
         rect = rects[pid].tolist()
-        im = crop_image(im, rect)
+        try:
+            im = crop_image(im, rect)
+        except:
+            return None
 
         scale_im2ndc = 1.0 / float(w // 2)
         scale = w / rect[2]

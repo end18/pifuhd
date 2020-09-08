@@ -27,14 +27,12 @@ import torch
 from skimage.io import imread
 import numpy as np
 import cv2
-from tqdm import tqdm_notebook as tqdm
+from tqdm import tqdm
 import base64
-from IPython.display import HTML
 
 # Util function for loading meshes
 from pytorch3d.io import load_objs_as_meshes
 
-from IPython.display import HTML
 from base64 import b64encode
 
 # Data structures and functions for rendering
@@ -98,7 +96,7 @@ def get_verts_rgb_colors(obj_path):
 
 def generate_video_from_obj(obj_path, image_path, video_path, renderer):
     input_image = cv2.imread(image_path)
-    input_image = input_image[:,:input_image.shape[1]//3]
+    # input_image = input_image[:,:input_image.shape[1]//3]
     input_image = cv2.resize(input_image, (512,512))
 
     # Setup
@@ -121,7 +119,7 @@ def generate_video_from_obj(obj_path, image_path, video_path, renderer):
     mesh_wo_tex = Meshes(vers, faces, wo_textures)
 
     # create VideoWriter
-    fourcc = cv2. VideoWriter_fourcc(*'MP4V')
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(video_path, fourcc, 20.0, (1024,512))
 
     for i in tqdm(range(90)):
@@ -133,8 +131,3 @@ def generate_video_from_obj(obj_path, image_path, video_path, renderer):
         image = np.concatenate([input_image, images_w_tex], axis=1)
         out.write(image.astype('uint8'))
     out.release()
-
-def video(path):
-    mp4 = open(path,'rb').read()
-    data_url = "data:video/mp4;base64," + b64encode(mp4).decode()
-    return HTML('<video width=500 controls loop> <source src="%s" type="video/mp4"></video>' % data_url)
