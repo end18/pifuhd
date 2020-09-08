@@ -24,6 +24,7 @@ SOFTWARE.
 import io
 import os
 import torch
+from torch import nn
 from skimage.io import imread
 import numpy as np
 import cv2
@@ -39,7 +40,8 @@ from base64 import b64encode
 from pytorch3d.structures import Meshes, Textures
 from pytorch3d.renderer import (
     look_at_view_transform,
-    OpenGLOrthographicCameras, 
+    OpenGLOrthographicCameras,
+    SfMPerspectiveCameras,
     PointLights, 
     DirectionalLights, 
     Materials, 
@@ -50,17 +52,33 @@ from pytorch3d.renderer import (
     HardPhongShader
 )
 
-def set_renderer():
+
+class MeshRendererWithDepth(nn.Module):
+    def __init__(self, rasterizer, shader):
+        super().__init__()
+        self.rasterizer = rasterizer
+        self.shader = shader
+
+    def forward(self, meshes_world, **kwargs) -> torch.Tensor:
+        fragments = self.rasterizer(meshes_world, **kwargs)
+        images = self.shader(fragments, meshes_world, **kwargs)
+        return images, fragments.zbuf
+
+
+def set_renderer(image_size=512, use_sfm=False):
     # Setup
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
 
     # Initialize an OpenGL perspective camera.
-    R, T = look_at_view_transform(2.0, 0, 180) 
-    cameras = OpenGLOrthographicCameras(device=device, R=R, T=T)
+    R, T = look_at_view_transform(2.0, 0, 180)
+    if use_sfm:
+        cameras = SfMPerspectiveCameras(focal_length=580.0, device=device, R=R, T=T)
+    else:
+        cameras = OpenGLOrthographicCameras(device=device, R=R, T=T)
 
     raster_settings = RasterizationSettings(
-        image_size=512, 
+        image_size=image_size,
         blur_radius=0.0, 
         faces_per_pixel=1, 
         bin_size = None, 
@@ -69,17 +87,12 @@ def set_renderer():
 
     lights = PointLights(device=device, location=((2.0, 2.0, 2.0),))
 
-    renderer = MeshRenderer(
-        rasterizer=MeshRasterizer(
-            cameras=cameras, 
-            raster_settings=raster_settings
-        ),
-        shader=HardPhongShader(
-            device=device, 
-            cameras=cameras,
-            lights=lights
-        )
-    )
+    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
+    shader = HardPhongShader(device=device, cameras=cameras, lights=lights)
+    if use_sfm:
+        renderer = MeshRendererWithDepth(rasterizer=rasterizer, shader=shader)
+    else:
+        renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
     return renderer
 
 def get_verts_rgb_colors(obj_path):
