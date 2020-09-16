@@ -21,7 +21,6 @@ class ResBlkPIFuNet(BasePIFuNet):
         self.opt = opt
         self.opt.norm_color = 'group'
         self.opt.mlp_dim_color = [513, 1024, 512, 256, 128, 3]
-        self.opt.num_views = 1
         self.opt.no_residual = False
         self.opt.use_tanh = False
         # self.opt.loadSize = 512

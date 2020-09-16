@@ -92,9 +92,9 @@ class HGPIFuMRNet(BasePIFuNet):
         nmls = []
         try:
             if self.netG.opt.use_front_normal:
-                nmls.append(self.netG.nmlF)
+                nmls.append(self.netG.nmlF[0:1])
             if self.netG.opt.use_back_normal:
-                nmls.append(self.netG.nmlB)
+                nmls.append(self.netG.nmlB[0:1])
         except:
             pass
 

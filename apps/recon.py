@@ -31,6 +31,21 @@ from PIL import Image
 
 parser = BaseOptions()
 
+
+def reshape_sample_tensor(sample_tensor, num_views):
+    if num_views == 1:
+        return sample_tensor
+    # Need to repeat sample_tensor along the batch dim num_views times
+    sample_tensor = sample_tensor.unsqueeze(dim=1)
+    sample_tensor = sample_tensor.repeat(1, num_views, 1, 1)
+    sample_tensor = sample_tensor.view(
+        sample_tensor.shape[0] * sample_tensor.shape[1],
+        sample_tensor.shape[2],
+        sample_tensor.shape[3]
+    )
+    return sample_tensor
+
+
 def gen_mesh(res, net, cuda, data, save_path, thresh=0.5, use_octree=True, components=False):
     image_tensor_global = data['img_512'].to(device=cuda)
     image_tensor = data['img'].to(device=cuda)
@@ -88,7 +103,7 @@ def gen_mesh_imgColor(res, netMR, netC, cuda, data, save_path, thresh=0.5, use_o
     calib_tensor = data['calib'].to(device=cuda)
 
     netMR.filter_global(image_tensor_global)
-    netMR.filter_local(image_tensor[:,None])
+    netMR.filter_local(image_tensor[0:1,None])
     netC.filter(image_tensor_global)
     netC.attach(netMR.netG.get_im_feat())
 
@@ -112,8 +127,9 @@ def gen_mesh_imgColor(res, netMR, netC, cuda, data, save_path, thresh=0.5, use_o
         cv2.imwrite(save_img_path, save_img)
 
         verts, faces, _, _ = reconstruction(
-            netMR, cuda, calib_tensor, res, b_min, b_max, thresh, use_octree=use_octree, num_samples=100000)
+            netMR, cuda, calib_tensor[0:1], res, b_min, b_max, thresh, use_octree=use_octree, num_samples=100000)
         verts_tensor = torch.from_numpy(verts.T).unsqueeze(0).to(device=cuda).float()
+        verts_tensor = reshape_sample_tensor(verts_tensor, calib_tensor.size(0))
 
         color = np.zeros(verts.shape)
         interval = 10000
@@ -153,13 +169,15 @@ def recon(opt, use_rect=False):
         print('Warning: opt is overwritten.')
         dataroot = opt.dataroot
         resolution = opt.resolution
+        num_views = opt.num_views
         results_path = opt.results_path
         loadSize = opt.loadSize
         load_netC_checkpoint_path = opt.load_netC_checkpoint_path
-        
+
         opt = state_dict['opt']
         opt.dataroot = dataroot
         opt.resolution = resolution
+        opt.num_views = num_views
         opt.results_path = results_path
         opt.loadSize = loadSize
         opt.load_netC_checkpoint_path = load_netC_checkpoint_path
@@ -204,17 +222,23 @@ def recon(opt, use_rect=False):
         set_eval()
 
         print('generate mesh (test) ...')
-        for i in tqdm(range(start_id, end_id)):
+        for i in tqdm(range(start_id, end_id // opt.num_views)):
             if i >= len(test_dataset):
                 break
             
             # for multi-person processing, set it to False
             if True:
-                test_data = test_dataset[i]
+                test_data = test_dataset[i * opt.num_views]
+                for j in range(i * opt.num_views + 1, (i + 1) * opt.num_views):
+                    temp_data = test_dataset[j]
+                    test_data['img'] = torch.cat([test_data['img'], temp_data['img']], dim=0)
+                    test_data['img_512'] = torch.cat([test_data['img_512'], temp_data['img_512']], dim=0)
+                    test_data['calib'] = torch.cat([test_data['calib'], temp_data['calib']], dim=0)
+                    test_data['calib_world'] = torch.cat([test_data['calib_world'], temp_data['calib_world']], dim=0)
                 if test_data is None:
                     continue
 
-                save_path = '%s/%s/recon/result_%s_%d.obj' % (opt.results_path, opt.name, test_data['name'], opt.resolution)
+                save_path = '%s/%s/recon/result_%s_%d_%d.obj' % (opt.results_path, opt.name, test_data['name'], opt.resolution, opt.num_views)
 
                 print(save_path)
                 gen_mesh_imgColor(opt.resolution, netMR, netC, cuda, test_data, save_path, components=opt.use_compose)

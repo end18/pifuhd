@@ -1,5 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
+import glob
 import os
 import random
 
@@ -42,7 +43,12 @@ class EvalDataset(Dataset):
         self.projection_mode = projection
 
         self.root = self.opt.dataroot
-        self.img_files = sorted([os.path.join(self.root,f) for f in os.listdir(self.root) if f.split('.')[-1] in ['png', 'jpeg', 'jpg', 'PNG', 'JPG', 'JPEG'] and os.path.exists(os.path.join(self.root,f.replace('.%s' % (f.split('.')[-1]), '_rect.txt')))])
+        self.angles = [int(360 / self.opt.num_views * i) for i in range(self.opt.num_views)]
+        self.img_files = []
+        for f in glob.glob(os.path.join(self.root, '*/*')):
+            if f.split('.')[-1] in ['png', 'jpeg', 'jpg', 'PNG', 'JPG', 'JPEG'] and int(f.split('/')[-1].split('_')[0]) in self.angles:
+                self.img_files.append(f)
+        self.img_files = sorted(self.img_files)
         self.IMG = os.path.join(self.root)
 
         self.phase = 'val'
@@ -71,8 +77,13 @@ class EvalDataset(Dataset):
         rect_path = self.img_files[index].replace('.%s' % (self.img_files[index].split('.')[-1]), '_rect.txt')
         # Name
         img_name = os.path.splitext(os.path.basename(img_path))[0]
+        obj_name = img_path.split('/')[-2]
+        mask_path = os.path.join(*img_path.split('/')[:-3], 'MASK', img_path.split('/')[-2], '{}.png'.format(img_name))
 
         im = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        if os.path.exists(mask_path):
+            mask = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
+            im = np.concatenate((im, mask[:, :, None]), axis=2)
         if im.shape[2] == 4:
             im = im / 255.0
             im[:,:,:3] /= im[:,:,3:] + 1e-8
@@ -111,8 +122,14 @@ class EvalDataset(Dataset):
         
         B_MIN = np.array([-1, -1, -1])
         B_MAX = np.array([1, 1, 1])
+        angle = int(img_path.split('/')[-1].split('_')[0])
         projection_matrix = np.identity(4)
         projection_matrix[1, 1] = -1
+        projection_matrix[0, 0] = np.cos(np.pi / 180 * angle)
+        projection_matrix[0, 2] = np.sin(np.pi / 180 * angle)
+        projection_matrix[2, 0] = -np.sin(np.pi / 180 * angle)
+        projection_matrix[2, 2] = np.cos(np.pi / 180 * angle)
+
         calib = torch.Tensor(projection_matrix).float()
 
         calib_world = torch.Tensor(intrinsic).float()
@@ -121,7 +138,7 @@ class EvalDataset(Dataset):
         image_512 = self.to_tensor(image_512)
         image = self.to_tensor(image)
         return {
-            'name': img_name,
+            'name': obj_name,
             'img': image.unsqueeze(0),
             'img_512': image_512.unsqueeze(0),
             'calib': calib.unsqueeze(0),

@@ -166,7 +166,7 @@ class HGPIFuNetwNML(BasePIFuNet):
 
         phi = None
         for i, im_feat in enumerate(self.im_feat_list):
-            point_local_feat_list = [self.index(im_feat, xy), sp_feat]       
+            point_local_feat_list = [self.index(im_feat[0:1], xy), sp_feat]
             point_local_feat = torch.cat(point_local_feat_list, 1)
             pred, phi = self.mlp(point_local_feat)
             pred = in_bb * pred
